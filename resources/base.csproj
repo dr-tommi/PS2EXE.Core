@@ -29,7 +29,13 @@
     <ApplicationManifest>{{ApplicationManifest}}</ApplicationManifest>
   </PropertyGroup>
 
+  <!-- Compile only the generated source; the default **/*.cs glob picks up unrelated files when the output folder contains other C# sources -->
+  <PropertyGroup>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
   <ItemGroup>
+    <Compile Include="$(MSBuildProjectName).cs" />
     <PackageReference Include="Microsoft.PowerShell.SDK" Version="{{PowerShellVersion}}" />
   </ItemGroup>
 

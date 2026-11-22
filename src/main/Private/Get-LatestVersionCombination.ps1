@@ -19,11 +19,11 @@ function Get-LatestVersionCombination {
         [string]$PowerShellVersion
     )
 
-    if (-not [System.String]::IsNullOrEmpty($PowerShellVersion)) {
-        [version]$latestPowerShellVersion = pwsh -Command "`$PSVersionTable.PSVersion.ToString()" 2>$null
-    } else {
-        $latestPowerShellVersion = $PowerShellVersion
+    if ([System.String]::IsNullOrEmpty($PowerShellVersion)) {
+        # -NoProfile: profile output would turn the result into an array
+        $PowerShellVersion = pwsh -NoProfile -Command "`$PSVersionTable.PSVersion.ToString()" 2>$null
     }
+    [version]$latestPowerShellVersion = $PowerShellVersion
 
     $latestDotNetSdkVersion = dotnet --list-sdks 2>$null | ForEach-Object { ($_ -split ' ')[0] } | Sort-Object { [version]$_ } -Descending | Select-Object -First 1
 

@@ -1,5 +1,6 @@
-// Win-PS2EXE v1.0.1.2
+// Win-PS2EXE v1.1.0.0
 // Front end to Powershell-Script-to-EXE-Compiler PS2EXE.ps1: https://github.com/MScholtes/PS2EXE
+// 1.1.0.0: targets Windows PowerShell 5.1 or PowerShell 7 (-Core), runs via pwsh and loads the module next to the exe
 // Markus Scholtes, 2023
 //
 // WPF "all in one file" program, no Visual Studio or MSBuild is needed to compile
@@ -29,8 +30,8 @@ using System.Reflection;
 [assembly:AssemblyCopyright("� Markus Scholtes 2023")]
 [assembly:AssemblyTrademark("")]
 [assembly:AssemblyCulture("")]
-[assembly:AssemblyVersion("1.0.1.2")]
-[assembly:AssemblyFileVersion("1.0.1.2")]
+[assembly:AssemblyVersion("1.1.0.0")]
+[assembly:AssemblyFileVersion("1.1.0.0")]
 
 namespace WPFApplication
 {
@@ -94,7 +95,14 @@ namespace WPFApplication
                     return;
                 }
 
-                string arguments = "-NoProfile -NoLogo -EP Bypass -Command \"Invoke-PS2EXE -inputFile '" + objSourceFile.Text + "'";
+                bool targetCore = ((RadioButton)objWindow.FindName("TargetPS7")).IsChecked.Value;
+
+                // load the module next to this exe so GUI and compiler always match
+                string modulePath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "PS2EXE.Core.psd1");
+                string importModule = System.IO.File.Exists(modulePath) ? "Import-Module '" + modulePath.Replace("'", "''") + "' -Force; " : "";
+
+                // try/catch: a thrown error would end -Command before Read-Host and close the window unread
+                string arguments = "-NoProfile -NoLogo -EP Bypass -Command \"try { " + importModule + "Invoke-PS2EXE -inputFile '" + objSourceFile.Text + "'";
 
                 // read content of TextBox control
                 TextBox objTargetFile = (TextBox)objWindow.FindName("TargetFile");
@@ -173,9 +181,22 @@ namespace WPFApplication
 
                 // read state of CheckBox control
                 CheckBox objCheckBox5 = (CheckBox)objWindow.FindName("configFile");
-                if (objCheckBox5.IsChecked.Value)
+                if (objCheckBox5.IsEnabled && objCheckBox5.IsChecked.Value)
                 {
                     arguments += " -configFile";
+                }
+
+                if (targetCore)
+                {
+                    arguments += " -Core";
+                    if (((CheckBox)objWindow.FindName("singleFile")).IsChecked.Value)
+                    {
+                        arguments += " -PublishSingleFile";
+                    }
+                    if (((CheckBox)objWindow.FindName("selfContained")).IsChecked.Value)
+                    {
+                        arguments += " -SelfContained";
+                    }
                 }
 
                 // read state of RadioButton control
@@ -201,6 +222,11 @@ namespace WPFApplication
                     }
                     else
                     {
+                        if (targetCore)
+                        {
+                            MessageBox.Show("Platform x86 is only supported for Windows PowerShell 5.1", "Compile", MessageBoxButton.OK, MessageBoxImage.Error);
+                            return;
+                        }
                         arguments += " -x86";
                     }
                 }
@@ -212,8 +238,19 @@ namespace WPFApplication
                     arguments += " " + objAdditionalParameters.Text.Replace("\"", "\\\"");
                 }
 
+                // -verbose would switch dotnet publish to detailed output (thousands of lines) for Core builds
+                if (targetCore)
+                {
+                    arguments += "; if ($?) { Write-Host \\\"`nThe executable is in the Release subfolder of the target directory.\\\" }";
+                }
+                else
+                {
+                    arguments += " -verbose";
+                }
+
                 // create powershell process with ps2exe command line
-                ProcessStartInfo psi = new ProcessStartInfo("powershell.exe", arguments + " -verbose; Read-Host \\\"`nPress Enter to leave\\\"\"");
+                // pwsh starts Windows PowerShell itself for 5.1 targets, -PublishSingleFile needs pwsh 7.6+
+                ProcessStartInfo psi = new ProcessStartInfo(PwshPath ?? "powershell.exe", arguments + " } catch { Write-Host $_ -ForegroundColor Red }; Read-Host \\\"`nPress Enter to leave\\\"\"");
                 // working directory is the directory of the source file
                 psi.WorkingDirectory = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(objSourceFile.Text));
                 psi.UseShellExecute = false;
@@ -232,6 +269,42 @@ namespace WPFApplication
                 }
 
             }
+        }
+
+        // full path of pwsh.exe from PATH, null if PowerShell 7 is not installed
+        public static readonly string PwshPath = FindInPath("pwsh.exe");
+
+        private static string FindInPath(string fileName)
+        {
+            foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
+            {
+                try
+                {
+                    string candidate = System.IO.Path.Combine(dir.Trim(), fileName);
+                    if (System.IO.File.Exists(candidate)) { return candidate; }
+                }
+                catch (ArgumentException) { } // invalid characters in a PATH entry
+            }
+            return null;
+        }
+
+        // target radio button checked (mouse, keyboard or automation): enable the options of the selected target
+        private void Target_Checked(object sender, RoutedEventArgs e)
+        {
+            Window objWindow = (Window)FindParentWindow(sender);
+            if (objWindow == null) { return; }
+
+            RadioButton objTargetPS7 = (RadioButton)objWindow.FindName("TargetPS7");
+            CheckBox objSingleFile = (CheckBox)objWindow.FindName("singleFile");
+            CheckBox objSelfContained = (CheckBox)objWindow.FindName("selfContained");
+            CheckBox objConfigFile = (CheckBox)objWindow.FindName("configFile");
+            // also raised while the XAML is loaded, before all controls exist
+            if (objTargetPS7 == null || objSingleFile == null || objSelfContained == null || objConfigFile == null) { return; }
+
+            bool targetCore = objTargetPS7.IsChecked.Value;
+            objSingleFile.IsEnabled = targetCore;
+            objSelfContained.IsEnabled = targetCore;
+            objConfigFile.IsEnabled = !targetCore;
         }
 
         // mouse moves into button area
@@ -359,7 +432,7 @@ namespace WPFApplication
     xmlns:local=""clr-namespace:WPFApplication;assembly=***ASSEMBLY***""
     xmlns:x=""http://schemas.microsoft.com/winfx/2006/xaml""
     x:Name=""Window"" Title=""Win-PS2EXE"" WindowStartupLocation=""CenterScreen""
-    Background=""#FFE8E8E8""  Width=""504"" Height=""392"" ShowInTaskbar=""True"">
+    Background=""#FFE8E8E8""  Width=""504"" Height=""452"" ShowInTaskbar=""True"">
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width=""auto"" />
@@ -367,6 +440,8 @@ namespace WPFApplication
             <ColumnDefinition Width=""auto"" />
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
+            <RowDefinition Height=""auto"" />
+            <RowDefinition Height=""auto"" />
             <RowDefinition Height=""auto"" />
             <RowDefinition Height=""auto"" />
             <RowDefinition Height=""auto"" />
@@ -441,7 +516,20 @@ namespace WPFApplication
         <Label Grid.Row=""11"" Grid.Column=""0"">Parameters:</Label>
         <TextBox x:Name=""AdditionParameters"" Height=""18"" Width=""362"" Margin=""0,0,10,0"" AllowDrop=""False"" ToolTip=""Optional: Additional parameters"" Grid.Row=""11"" Grid.Column=""1"" />
 
-        <WrapPanel Margin=""0,5,0,0"" HorizontalAlignment=""Right"" Grid.Row=""12"" Grid.Column=""1"" >
+        <Label Margin=""0,10,0,0"" Grid.Row=""12"" Grid.Column=""0"">Target:</Label>
+        <WrapPanel Margin=""0,10,0,0"" Grid.Row=""12"" Grid.Column=""1"" >
+            <RadioButton x:Name=""TargetPS5"" VerticalAlignment=""Center"" IsChecked=""True"" GroupName=""Target"" Content=""Windows PowerShell 5.1"" ToolTip=""Compile for Windows PowerShell 5.1 (.NET Framework)""
+                Checked=""Target_Checked"" />
+            <RadioButton x:Name=""TargetPS7"" Margin=""10,0,0,0"" VerticalAlignment=""Center"" IsChecked=""False"" GroupName=""Target"" Content=""PowerShell 7"" ToolTip=""Compile for PowerShell 7 (parameter -Core, needs pwsh 7.6+ and the .NET SDK)""
+                Checked=""Target_Checked"" />
+        </WrapPanel>
+
+        <WrapPanel Grid.Row=""13"" Grid.Column=""1"" >
+            <CheckBox x:Name=""singleFile"" IsChecked=""True"" IsEnabled=""False"" ToolTip=""Package the executable into a single file"" >Single file (-PublishSingleFile)</CheckBox>
+            <CheckBox x:Name=""selfContained"" IsChecked=""False"" IsEnabled=""False"" Margin=""6,0,0,0"" ToolTip=""Include the .NET runtime, so it does not have to be installed on the target system (much larger file)"" >Self-contained (-SelfContained)</CheckBox>
+        </WrapPanel>
+
+        <WrapPanel Margin=""0,5,0,0"" HorizontalAlignment=""Right"" Grid.Row=""14"" Grid.Column=""1"" >
             <Button x:Name=""Compile"" Background=""#FFD0D0D0"" Height=""22"" Width=""72"" Margin=""10"" Content=""Compile"" ToolTip=""Compile source file to an executable"" IsDefault=""True""
                 Click=""Button_Click"" MouseEnter=""Button_MouseEnter"" MouseLeave=""Button_MouseLeave"" />
             <Button x:Name=""Cancel"" Background=""#FFD0D0D0"" Height=""22"" Width=""72"" Margin=""10"" Content=""Cancel"" ToolTip=""End program without action"" IsCancel=""True""
@@ -460,6 +548,13 @@ namespace WPFApplication
             { // on error in XAML definition XamlReader sometimes generates an exception
                 MessageBox.Show("Error creating the window objects from XAML description\r\n" + ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
+            }
+
+            if (CustomWindow.PwshPath == null)
+            { // without pwsh only Windows PowerShell 5.1 targets are possible
+                RadioButton objTargetPS7 = (RadioButton)objWindow.FindName("TargetPS7");
+                objTargetPS7.IsEnabled = false;
+                objTargetPS7.ToolTip = "PowerShell 7 (pwsh.exe) was not found in PATH";
             }
 
             // and show window

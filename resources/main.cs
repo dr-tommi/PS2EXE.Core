@@ -2318,6 +2318,7 @@ namespace ModuleNameSpace
             return me.ExitCode;
         }
 
+#if NETCOREAPP
         private static string GetPowershellModulePath()
         {
             var environment = new StringBuilder();
@@ -2362,6 +2363,13 @@ namespace ModuleNameSpace
                 return null;
             return baseFolder;
         }
+#else
+        // Windows PowerShell 5.1 finds its modules itself; the C# 5 compiler of .NET Framework cannot parse the code above
+        private static string GetPowershellModulePath()
+        {
+            return Environment.GetEnvironmentVariable("PSModulePath");
+        }
+#endif
 
         static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
         {

@@ -798,7 +798,22 @@ function Invoke-PS2EXE {
             $dotnetArgs += @('-v', 'q', '--property', 'WarningLevel=0', '/clp:ErrorsOnly')
         }
 
-        $dotnetOutput = & dotnet @dotnetArgs 2>&1
+        # dotnet build/publish leaves empty random folders in %TEMP% (dotnet/sdk#35353): give it a private
+        # TEMP and delete it afterwards. No build servers, so no long-lived process keeps the deleted path.
+        $dotnetArgs += @('-nodeReuse:false', '-p:UseSharedCompilation=false')
+        $dotnetTemp = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "ps2exe-dotnet-$([System.Guid]::NewGuid().ToString('N'))"
+        New-Item -Path $dotnetTemp -ItemType Directory -Force | Out-Null
+        $previousTemp = $env:TEMP
+        $previousTmp = $env:TMP
+        try {
+            $env:TEMP = $dotnetTemp
+            $env:TMP = $dotnetTemp
+            $dotnetOutput = & dotnet @dotnetArgs 2>&1
+        } finally {
+            $env:TEMP = $previousTemp
+            $env:TMP = $previousTmp
+            Remove-Item -Path $dotnetTemp -Recurse -Force -ErrorAction SilentlyContinue
+        }
         if ($LASTEXITCODE -ne 0) {
             $errorLines = $dotnetOutput | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -or $_ -match '(?i)error' }
             $errorDetail = if ($errorLines) { ($errorLines | Out-String).Trim() } else { ($dotnetOutput | Out-String).Trim() }

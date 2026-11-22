@@ -61,3 +61,5 @@ CodeCov.xml
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+examples/out/
